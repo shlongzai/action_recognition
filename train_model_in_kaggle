@@ -1,0 +1,283 @@
+!pip install googledrivedownloader
+import requests,time,shutil,cv2,os,json,zipfile
+from google_drive_downloader import GoogleDriveDownloader as gdd
+import torchvision.models as models
+abspath=os.path.abspath('')
+
+#download dataset
+url11='1-4jx-pg5WN1uS0AVupm0NPT3LJ2uot63'
+video_path=os.path.join(abspath,'video')
+zip_path=os.path.join(video_path,'video.zip')
+extract_path=os.path.join(abspath,'video')
+gdd.download_file_from_google_drive(file_id=url11,
+                                    dest_path=zip_path,unzip=True)
+
+# #download model
+# url21='1sk244BIS-8jA5Bw1BgN-9TNuyZjd10ZN'
+# model_path=os.path.join(abspath,'hdm51_resnet_1.pkl')
+# # r=requests.get(url2,stream=True)
+# # with open(model_path,'wb') as f:
+# #   f.write(r.content)
+# gdd.download_file_from_google_drive(file_id=url21,
+#                                     dest_path=model_path)
+# print(os.path.getsize(model_path))
+
+
+
+#download path_for_test_dataset_list
+url31='1-0tb1iVlrU8QpPyeKmlpLrwfJjaSGt3d'
+test_path_file=os.path.join(abspath,'test_path.json')
+gdd.download_file_from_google_drive(file_id=url31,
+                                    dest_path=test_path_file)
+print(os.path.getsize(test_path_file))
+with open(test_path_file,'r') as f:
+    test_path=json.load(f)
+    
+#download path_for_train_dataset_list
+url31='1MvSMWRIN7dy11AgJuU8cszmhPqlJZEZ-'
+train_path_file=os.path.join(abspath,'train_path.json')
+gdd.download_file_from_google_drive(file_id=url31,
+                                    dest_path=train_path_file)
+print(os.path.getsize(train_path_file))
+with open(train_path_file,'r') as f:
+    train_path=json.load(f)
+
+
+##
+##create initialize model
+##
+
+
+
+
+import torch
+from torch import nn
+import torchvision.models as models
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+inception_v3=models.inception.inception_v3(pretrained=True,progress=True)#get a initiallization pre_trained network
+def change_network(network):
+  for param in network.parameters():
+      param.requires_grad = False
+  fc_inputs = network.fc.in_features
+  print(fc_inputs)
+  network.fc = nn.Sequential(
+      nn.Linear(fc_inputs, 256),
+      nn.ReLU(),
+      nn.Linear(256, 51),
+      nn.Sigmoid()
+  )
+  network=network.to(device)
+  return network
+inception_v3=change_network(inception_v3)
+
+
+##
+##create dataloader
+##
+
+
+import random,os,json,time
+import torch
+import torchvision.models as models
+from torch import nn
+from torch.nn import functional as F
+import numpy as np
+import cv2
+from torchvision import transforms
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(device)
+# device='cpu'
+
+height=299
+width=299
+class MyDataset(torch.utils.data.Dataset):
+    '''构建训练集'''
+    def __init__(self,path):
+        # 加载手写数字数据集digits，有标签，class为1~10
+        #self.X=
+        self.rate=10
+        self.sample_rate=1
+        self.path=[[os.path.join(video_path,*j.split('/')[-2:]) for j in i]for i in path]
+        self.cumsum=[0]
+        class_num=len(self.path)
+        self.label=[]
+        for j,i in enumerate(self.path):
+          a=int(len(i)/self.rate)
+          self.cumsum.append(self.cumsum[-1]+a)
+          self.label.extend([j]*(a*self.rate))
+        self.label=torch.tensor(self.label)
+        self.y=torch.zeros(self.cumsum[-1]*self.rate, class_num)
+        self.y[range(self.cumsum[-1]*self.rate),self.label]=1
+        self.X=np.zeros((self.cumsum[-1]*self.rate,height,width,3),dtype=np.uint8)
+        self.cumsum.pop(0)
+        self.count=[self.rate*self.sample_rate]*self.cumsum[-1]
+        self.transform=transforms.ToTensor()
+ 
+    def __len__(self):
+        #返回训练集数据量
+        return self.cumsum[-1]*self.rate*self.sample_rate
+ 
+    def __getitem__(self, index1):
+        index=int(index1/self.sample_rate)
+        picture_index=int(index/self.rate)
+        if self.count[picture_index]>=self.rate*self.sample_rate:
+          self.count[picture_index]=0
+          self.X[picture_index*self.rate:(picture_index+1)*self.rate]=self.update(self.label[index])
+        self.count[picture_index]+=1
+        return self.transform(self.X[index),self.y[index]
+
+    def update(self,class_index):
+      index=random.sample(range(len(self.path[class_index])),1)
+      v=cv2.VideoCapture(self.path[class_index][index[0]])
+      if v.isOpened():
+        m=[]
+        while True:
+          flag,frame=v.read()
+          if flag==False:
+            break
+          m.append(frame)
+        index2=random.sample(range(len(m)),self.rate)
+        return np.stack([cv2.cvtColor(cv2.resize(m[i],(width,height)),cv2.COLOR_BGR2RGB) for i in index2],axis=0)
+
+      else:
+        print('error')
+        
+train_data=MyDataset(train_path)
+test_data=MyDataset(test_path)
+train_loader = torch.utils.data.DataLoader(dataset=train_data, batch_size=32, shuffle=True)
+test_loader = torch.utils.data.DataLoader(dataset=test_data, batch_size=32,shuffle=True)
+
+
+
+##
+##train model
+##
+
+from torch.autograd import Variable
+optimizer = torch.optim.Adam([{'params':inception_v3.parameters()}],lr=0.01)
+time0=time.time()
+model_path=os.path.join(abspath,'hdm51_inception_v3_1.pkl')
+processing_information_path=os.path.join(abspath,'hdm51_inception_v3_1.json')
+inception_v3.train()
+train_loss_list=[]
+train_accuracy_list=[]
+test_accuracy_list=[]
+test_loss_list=[]
+for epoch in range(40):    # 训练的数据量为5个epoch，每个epoch为一个循环
+                        # 每个epoch要训练所有的图片，每训练完成200张便打印一下训练的效果（loss值）
+    #running_loss = 0.0  # 定义一个变量方便我们对loss进行输出
+    train_loss_list.append([])
+    train_accuracy_list.append([])
+    test_accuracy_list.append([])
+    test_loss_list.append([])
+    
+    for i, data in enumerate(train_loader, 1):  # 这里我们遇到了第一步中出现的trailoader，代码传入数据
+        # enumerate是python的内置函数，既获得索引也获得数据
+        # get the inputs
+        inception_v3.eval()
+        for test_data in test_loader:
+          test_inputs, test_labels =test_data
+          test_inputs, test_labels = Variable(test_inputs).to(device), Variable(test_labels).to(device)
+          with torch.no_grad():
+            test_pred = inception_v3(test_inputs)
+            test_loss=F.binary_cross_entropy(test_pred,test_labels)
+          test_loss_list[-1].append(test_loss.item())
+          test_accuracy_list[-1].append((torch.sum((torch.argmax(test_labels,dim=1)==torch.argmax(test_pred,dim=1)).float())/test_labels.shape[0]).item())
+#           print('test_loss:',test_loss_list[-1][-1])
+#           print('test_accuracy:',test_accuracy_list[-1][-1])
+          break
+
+        inception_v3.train()
+        inputs, labels = data  # data是从enumerate返回的data，包含数据和标签信息，分别赋值给inputs和labels
+
+        # wrap them in Variable
+        inputs, labels = Variable(inputs).to(device), Variable(labels).to(device)  # 转换数据格式用Variable
+        
+        optimizer.zero_grad()        # 梯度置零，因为反向传播过程中梯度会累加上一次循环的梯度
+        # forward + backward + optimize
+        train_pred = inception_v3(inputs)[0]
+#         print(type(train_pred))
+        loss=F.binary_cross_entropy(train_pred,labels)
+        loss.backward()                    # loss反向传播
+        optimizer.step()                   # 反向传播后参数更新
+        train_loss_list[-1].append(loss.item())       # loss累加
+        train_accuracy_list[-1].append((torch.sum((torch.argmax(labels,dim=1)==torch.argmax(train_pred,dim=1)).float())/labels.shape[0]).item())
+    torch.save(inception_v3, model_path)
+    with open(processing_information_path,'w') as f:
+      json.dump({'train_loss_list':train_loss_list,'test_loss_list':test_loss_list,
+                'train_accuracy_list':train_accuracy_list,'test_accuracy_list':test_accuracy_list},f)
+    time1=time.time()
+    print(epoch,time1-time0)
+    print('train_loss:',sum(train_loss_list[-1])/len(train_loss_list[-1]))
+    print('test_loss:',sum(test_loss_list[-1])/len(test_loss_list[-1]))
+    print('train_accuracy:',sum(train_accuracy_list[-1])/len(train_accuracy_list[-1]))
+    print('test_accuracy:',sum(test_accuracy_list[-1])/len(test_accuracy_list[-1]))
+    time0=time1
+
+print('Finished Training')
+
+
+##
+##eval model in dataset
+##
+
+
+
+import cv2,torch
+import os,time,json
+import numpy as np
+from torchvision import transforms
+height=299
+width=299
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# print(device)
+# # resnet152=torch.load(model_path,map_location=torch.device('cpu'))#cpu
+# resnet152=torch.load(model_path)#gpu
+inception_v3=torch.load('/kaggle/input/inception-v3-model/hdm51_inception_v3_1.pkl',map_location=device)
+inception_v3.eval()
+my_transform=transforms.ToTensor()
+def cal_result(path):
+    result=[]
+    time0=time.time()
+    for k,i in enumerate(path):
+      print(k)
+      for j in i:
+        #print(j)
+        time0=time.time()
+        v=cv2.VideoCapture(os.path.join(video_path,*j.split('/')[-2:]))
+        if v.isOpened():
+          m=[]
+          numpylist=[]
+          while True:
+            flag,frame=v.read()
+            if flag:
+              m.append(my_transform(cv2.cvtColor(cv2.resize(frame,(width,height)),cv2.COLOR_BGR2RGB)))
+            # count+=1
+            if len(m)>0 and (not flag or len(m)%64==0):
+            #time1=time.time()
+              input=torch.stack(m,dim=0).to(device)
+              m=[]
+              output=inception_v3(input)
+              if device=='cpu':
+                numpylist.append(output.detach().numpy())
+              else:
+                numpylist.append(output.detach().cpu().numpy())
+            if not flag:
+              break
+          result.append([j,k,np.concatenate(numpylist,axis=0)])
+        else:
+          print('error')
+      time1=time.time()
+      print(time1-time0)
+    return result
+test_result_file=os.path.join(abspath,'hdm51_inception_v3_1_testresult.json')
+train_result_file=os.path.join(abspath,'hdm51_inception_v3_1_trainresult.json')
+train_result=cal_result(train_path)
+test_result=cal_result(test_path)
+
+with open(train_result_file,'w') as f:
+  json.dump([[i[0],i[1],i[2].tolist()]for i in train_result],f)
+with open(test_result_file,'w') as f:
+  json.dump([[i[0],i[1],i[2].tolist()]for i in test_result],f)
