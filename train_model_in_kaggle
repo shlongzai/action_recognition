@@ -15,9 +15,6 @@ gdd.download_file_from_google_drive(file_id=url11,
 # #download model
 # url21='1sk244BIS-8jA5Bw1BgN-9TNuyZjd10ZN'
 # model_path=os.path.join(abspath,'hdm51_resnet_1.pkl')
-# # r=requests.get(url2,stream=True)
-# # with open(model_path,'wb') as f:
-# #   f.write(r.content)
 # gdd.download_file_from_google_drive(file_id=url21,
 #                                     dest_path=model_path)
 # print(os.path.getsize(model_path))
