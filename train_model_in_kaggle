@@ -241,8 +241,6 @@ def cal_result(path):
     for k,i in enumerate(path):
       print(k)
       for j in i:
-        #print(j)
-        time0=time.time()
         v=cv2.VideoCapture(os.path.join(video_path,*j.split('/')[-2:]))
         if v.isOpened():
           m=[]
