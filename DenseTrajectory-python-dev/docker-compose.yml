@@ -1,0 +1,11 @@
+version: '3'
+
+services:
+  app:
+    container_name: dense_track
+    build: .
+    working_dir: '/home'
+    volumes:
+       - "./:/home"
+       - "E:/datasets/KTH:/home/dataset/KTH"     # 各自KTHデータセットをマウントできるように修正する必要あり
+    tty: true
